@@ -1,0 +1,132 @@
+import discord
+from discord.ext import commands
+
+# Настройки бота
+intents = discord.Intents.default()
+intents.members = True  # Включаем отслеживание участников
+intents.message_content = True
+
+bot = commands.Bot(command_prefix='!', intents=intents)
+
+# ID целевой роли, при выдаче которой будет создаваться канал
+TARGET_ROLE_ID = 1367060717974454362  # Замените на ID вашей роли
+
+# ID категории, в которой будет создаваться канал (опционально)
+CATEGORY_ID = 1428677246708748338  # Замените на ID категории или оставьте None
+
+# Название шаблона для канала (можно использовать {user} для имени пользователя)
+CHANNEL_NAME_TEMPLATE = "{user}"
+
+# Сообщение, которое будет отправлено в новый канал
+WELCOME_MESSAGE = """<a:HaruSparkles:927804752954282004> **Приветствую новичок, в этом канале ты можешь узнать, где и что находится, дабы освоится в нашей семье** :axolotlspin: 
+
+<:logo:1060151969915875358> **Канал** https://discord.com/channels/1264173129668890665/1444307188788236329 **— тут будет поститься вся информация, касаемо семьи.**
+
+<:logo:975444964953706558> **Канал**https://discord.com/channels/1264173129668890665/1471667413690093650 **— теги на разные мероприятия, не советую его мутить, мало ли, пропустишь нужный тег.**
+
+<:logo:975444964953706558> **Канал** https://discord.com/channels/1264173129668890665/1482093899878240489 **— Контракты, контракты и еще раз контракты, данный канал нужен для тех, кто пикается контракты, не прочитав правила в этом канале, можно и получить варн, подробнее можно узнать, тыкнув по этому сообщению —> ** https://discord.com/channels/1264173129668890665/1482095061062910022
+
+<:logo:975444964953706558> **Канал** https://discord.com/channels/1264173129668890665/1270701814886563851 **— Канал с нашим дресс-кодом, цветом машин.**
+
+<:logo:975444964953706558> **Канал** https://discord.com/channels/1264173129668890665/1428457643638522026 **— В этом канале, нужно будет тебе откидывать скриншоты, где ты показываешь свой актив, независимо какой, фракционный/семейный.**
+
+<:logo:975444964953706558> **Канал** https://discord.com/channels/1264173129668890665/1452847877859573862 **— Канал, в котором ты отписываешь об инактиве (отпуске), пример заполнения —> **https://discord.com/channels/1264173129668890665/1452847877859573862/1452847971463860419
+
+<:logo:975444964953706558> **Канал** https://discord.com/channels/1264173129668890665/1377198825512501299 **— Розыгрыш среди самых активных участников нашей семьи.**"""
+
+@bot.event
+async def on_ready():
+    print(f'Бот {bot.user} успешно запущен!')
+
+@bot.event
+async def on_member_update(before, after):
+    """
+    Отслеживаем обновление ролей участника
+    """
+    # Получаем ID ролей до и после
+    before_roles = set(role.id for role in before.roles)
+    after_roles = set(role.id for role in after.roles)
+    
+    # Находим добавленные роли
+    added_roles = after_roles - before_roles
+    
+    # Проверяем, была ли добавлена целевая роль
+    if TARGET_ROLE_ID in added_roles:
+        await create_channel_and_send_message(after)
+
+async def create_channel_and_send_message(member):
+    """
+    Создает канал и отправляет сообщение
+    """
+    guild = member.guild
+    
+    # Формируем название канала
+    channel_name = CHANNEL_NAME_TEMPLATE.format(user=member.name.lower())
+    
+    try:
+        # Получаем категорию (если указана)
+        category = None
+        if CATEGORY_ID:
+            category = guild.get_channel(CATEGORY_ID)
+        
+        # Создаем текстовый канал
+        # Настраиваем права доступа: только участник с ролью и администраторы
+        overwrites = {
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            member: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        }
+        
+        # Добавляем права для роли с целевой ролью (опционально)
+        target_role = guild.get_role(TARGET_ROLE_ID)
+        if target_role:
+            overwrites[target_role] = discord.PermissionOverwrite(read_messages=True, send_messages=True)
+        
+        # Создаем канал
+        channel = await guild.create_text_channel(
+            name=channel_name,
+            category=category,
+            overwrites=overwrites,
+            reason=f"Создан для пользователя {member.name} после получения роли"
+        )
+        
+        # Отправляем сообщение в созданный канал
+        await channel.send(f"{member.mention}\n{WELCOME_MESSAGE}")
+        
+        print(f"Создан канал {channel.name} для пользователя {member.name}")
+        
+    except Exception as e:
+        print(f"Ошибка при создании канала: {e}")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def set_role(ctx, role_id: int):
+    """
+    Команда для установки ID целевой роли
+    Использование: !set_role 123456789012345678
+    """
+    global TARGET_ROLE_ID
+    role = ctx.guild.get_role(role_id)
+    if role:
+        TARGET_ROLE_ID = role_id
+        await ctx.send(f"Целевая роль установлена: {role.name}")
+    else:
+        await ctx.send("Роль с таким ID не найдена!")
+
+@bot.command()
+@commands.has_permissions(administrator=True)
+async def set_category(ctx, category_id: int):
+    """
+    Команда для установки ID категории
+    Использование: !set_category 123456789012345678
+    """
+    global CATEGORY_ID
+    category = ctx.guild.get_channel(category_id)
+    if category and isinstance(category, discord.CategoryChannel):
+        CATEGORY_ID = category_id
+        await ctx.send(f"Категория установлена: {category.name}")
+    else:
+        await ctx.send("Категория с таким ID не найдена!")
+
+# Запуск бота
+bot.run('MTQ4MzQ2ODU3MDA3OTAwNjc1MQ.GXIb-F.ZweVgK_bISXjwnilKamcD0lTn4HYu7WIqrGsCg')  # Замените на токен вашего бота
