@@ -127,6 +127,3 @@ async def set_category(ctx, category_id: int):
         await ctx.send(f"Категория установлена: {category.name}")
     else:
         await ctx.send("Категория с таким ID не найдена!")
-
-# Запуск бота
-bot.run('MTQ4MzQ2ODU3MDA3OTAwNjc1MQ.GXIb-F.ZweVgK_bISXjwnilKamcD0lTn4HYu7WIqrGsCg')  # Замените на токен вашего бота
