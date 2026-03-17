@@ -1,10 +1,51 @@
 import discord
 from discord.ext import commands
+import logging
 import os
+from datetime import datetime
+import sys
+
+# Настройка логирования
+def setup_logging():
+    """Настройка системы логирования"""
+    
+    # Создаем папку для логов, если её нет
+    if not os.path.exists('logs'):
+        os.makedirs('logs')
+    
+    # Формат логов
+    log_format = '%(asctime)s | %(levelname)-8s | %(name)s | %(message)s'
+    date_format = '%Y-%m-%d %H:%M:%S'
+    
+    # Имя файла с логами на текущую дату
+    log_filename = f'logs/bot_log_{datetime.now().strftime("%Y%m%d")}.log'
+    
+    # Настройка корневого логгера
+    logging.basicConfig(
+        level=logging.INFO,
+        format=log_format,
+        datefmt=date_format,
+        handlers=[
+            logging.FileHandler(log_filename, encoding='utf-8'),
+            logging.StreamHandler(sys.stdout)  # Вывод в консоль
+        ]
+    )
+    
+    # Создаем логгер для бота
+    logger = logging.getLogger('DiscordBot')
+    logger.info("="*50)
+    logger.info("Логирование инициализировано")
+    logger.info(f"Файл логов: {log_filename}")
+    logger.info("="*50)
+    
+    return logger
+
+# Инициализация логгера
+logger = setup_logging()
 
 # Настройки бота (измените на свои)
-TARGET_ROLE_ID = 1367060717974454362  # ID роли, при выдаче которой создается канал
-CHANNEL_NAME = '{user}'  # Имя создаваемого канала
+TARGET_ROLE_ID = 1483489951847944323  # ID роли, при выдаче которой создается канал
+CHANNEL_NAME = 'приветственный-канал'  # Имя создаваемого канала
 WELCOME_MESSAGE = 'Добро пожаловать! Мы рады видеть вас на сервере!'  # Сообщение в канале
 
 # Настройка интентов (необходимо для отслеживания обновлений участников)
@@ -15,20 +56,48 @@ bot = commands.Bot(command_prefix='!', intents=intents)
 
 @bot.event
 async def on_ready():
-    print(f'Бот {bot.user} успешно запущен!')
-    print(f'Отслеживается роль с ID: {TARGET_ROLE_ID}')
+    """Событие запуска бота"""
+    logger.info(f'Бот {bot.user} (ID: {bot.user.id}) успешно запущен!')
+    logger.info(f'Отслеживается роль с ID: {TARGET_ROLE_ID}')
+    
+    # Информация о серверах
+    logger.info(f'Бот находится на {len(bot.guilds)} серверах:')
+    for guild in bot.guilds:
+        logger.info(f'  - Сервер: {guild.name} (ID: {guild.id})')
+        logger.info(f'    Участников: {guild.member_count}')
+        
+        # Проверяем наличие целевой роли на сервере
+        target_role = guild.get_role(TARGET_ROLE_ID)
+        if target_role:
+            logger.info(f'    Целевая роль найдена: {target_role.name}')
+        else:
+            logger.warning(f'    Целевая роль с ID {TARGET_ROLE_ID} НЕ найдена на сервере!')
 
 @bot.event
 async def on_member_update(before, after):
     """
     Событие срабатывает при изменении участника (включая добавление/удаление ролей)
     """
+    guild = after.guild
+    logger.debug(f"Обновление участника {after.name} на сервере {guild.name}")
+    
     # Проверяем, была ли добавлена целевая роль
     had_role_before = any(role.id == TARGET_ROLE_ID for role in before.roles)
     has_role_now = any(role.id == TARGET_ROLE_ID for role in after.roles)
     
+    # Логируем изменения ролей
+    if before.roles != after.roles:
+        added_roles = [role for role in after.roles if role not in before.roles]
+        removed_roles = [role for role in before.roles if role not in after.roles]
+        
+        if added_roles:
+            logger.info(f"Участнику {after.name} (ID: {after.id}) добавлены роли: {[r.name for r in added_roles]}")
+        if removed_roles:
+            logger.info(f"У участника {after.name} (ID: {after.id}) удалены роли: {[r.name for r in removed_roles]}")
+    
     # Если роль была добавлена (раньше не было, теперь есть)
     if not had_role_before and has_role_now:
+        logger.info(f"=== ОБНАРУЖЕНО: Целевая роль выдана участнику {after.name} (ID: {after.id}) ===")
         await create_channel_for_member(after)
 
 async def create_channel_for_member(member):
@@ -36,28 +105,40 @@ async def create_channel_for_member(member):
     Создает текстовый канал для участника и отправляет приветственное сообщение
     """
     guild = member.guild
+    logger.info(f"Начало создания канала для участника {member.name} (ID: {member.id}) на сервере {guild.name}")
+    
+    # Проверяем права бота
+    if not guild.me.guild_permissions.manage_channels:
+        logger.error(f"У бота нет прав на управление каналами на сервере {guild.name}!")
+        return
     
     # Проверяем, существует ли уже канал для этого участника
-    existing_channel = discord.utils.get(guild.channels, name=f"{CHANNEL_NAME}-{member.name.lower()}")
+    channel_name = f"{CHANNEL_NAME}-{member.name.lower()}"
+    existing_channel = discord.utils.get(guild.channels, name=channel_name)
     
     if existing_channel:
-        print(f"Канал для {member.name} уже существует: {existing_channel.name}")
+        logger.warning(f"Канал для {member.name} уже существует: {existing_channel.name} (ID: {existing_channel.id})")
+        logger.info("Попытка отправить сообщение в существующий канал")
+        try:
+            await existing_channel.send(f"{member.mention} {WELCOME_MESSAGE} (канал уже существовал)")
+            logger.info(f"Сообщение отправлено в существующий канал {existing_channel.name}")
+        except Exception as e:
+            logger.error(f"Не удалось отправить сообщение в существующий канал: {e}")
         return
     
     try:
-        # Создаем канал в категории "Общее" или без категории
-        # Можно указать конкретную категорию, если нужно
+        # Поиск категории
         category = discord.utils.get(guild.categories, name="Общее")
-        
-        # Создаем канал с именем, содержащим имя участника
-        channel_name = f"{CHANNEL_NAME}-{member.name.lower()}"
+        logger.debug(f"Категория 'Общее' {'найдена' if category else 'не найдена'}")
         
         # Настройки прав доступа для канала
         overwrites = {
-            guild.default_role: discord.PermissionOverwrite(read_messages=False),  # Запрет для всех
-            member: discord.PermissionOverwrite(read_messages=True, send_messages=True),  # Разрешение для участника
-            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)  # Разрешение для бота
+            guild.default_role: discord.PermissionOverwrite(read_messages=False),
+            member: discord.PermissionOverwrite(read_messages=True, send_messages=True),
+            guild.me: discord.PermissionOverwrite(read_messages=True, send_messages=True)
         }
+        
+        logger.info(f"Создание канала с именем: {channel_name}")
         
         # Создаем канал
         if category:
@@ -65,21 +146,24 @@ async def create_channel_for_member(member):
                 channel_name,
                 category=category,
                 overwrites=overwrites,
-                topic=f"Личный канал для {member.name}"
+                topic=f"Личный канал для {member.name} (ID: {member.id})"
             )
+            logger.info(f"Канал создан в категории {category.name}")
         else:
             channel = await guild.create_text_channel(
                 channel_name,
                 overwrites=overwrites,
-                topic=f"Личный канал для {member.name}"
+                topic=f"Личный канал для {member.name} (ID: {member.id})"
             )
+            logger.info("Канал создан без категории")
         
-        print(f"Создан канал {channel.name} для {member.name}")
+        logger.info(f"✓ Канал успешно создан: {channel.name} (ID: {channel.id})")
         
         # Отправляем приветственное сообщение
+        logger.info(f"Отправка приветственного сообщения в канал {channel.name}")
         await channel.send(f"{member.mention} {WELCOME_MESSAGE}")
         
-        # Опционально: добавляем embed с информацией
+        # Создаем и отправляем embed с информацией
         embed = discord.Embed(
             title="Добро пожаловать!",
             description="Это ваш личный канал. Здесь вы можете общаться с администрацией или просто чувствовать себя как дома.",
@@ -87,14 +171,33 @@ async def create_channel_for_member(member):
         )
         embed.set_thumbnail(url=member.avatar.url if member.avatar else member.default_avatar.url)
         embed.add_field(name="Участник", value=member.mention, inline=True)
-        embed.add_field(name="Дата присоединения", value=member.joined_at.strftime("%d.%m.%Y"), inline=True)
+        embed.add_field(name="ID участника", value=member.id, inline=True)
+        embed.add_field(name="Дата присоединения", value=member.joined_at.strftime("%d.%m.%Y %H:%M"), inline=True)
+        embed.add_field(name="Дата создания канала", value=datetime.now().strftime("%d.%m.%Y %H:%M"), inline=True)
+        embed.set_footer(text=f"Канал создан ботом {bot.user.name}")
         
         await channel.send(embed=embed)
+        logger.info(f"✓ Embed сообщение отправлено в канал {channel.name}")
+        
+        # Логируем успешное создание канала
+        logger.info(f"=== УСПЕХ: Канал для {member.name} успешно создан и настроен ===")
+        
+        # Отправляем уведомление в системный канал (если есть)
+        system_channel = guild.system_channel
+        if system_channel and system_channel.permissions_for(guild.me).send_messages:
+            try:
+                await system_channel.send(f"✅ Создан личный канал для {member.mention}: {channel.mention}")
+                logger.info(f"Уведомление отправлено в системный канал {system_channel.name}")
+            except Exception as e:
+                logger.warning(f"Не удалось отправить уведомление в системный канал: {e}")
         
     except discord.Forbidden:
-        print(f"Ошибка: у бота нет прав на создание канала на сервере {guild.name}")
+        logger.error(f"❌ ОШИБКА: У бота нет прав на создание канала на сервере {guild.name}!")
+        logger.error("Убедитесь, что у бота есть права 'Manage Channels'")
+    except discord.HTTPException as e:
+        logger.error(f"❌ ОШИБКА HTTP при создании канала: {e.status} - {e.text}")
     except Exception as e:
-        print(f"Ошибка при создании канала для {member.name}: {e}")
+        logger.error(f"❌ НЕПРЕДВИДЕННАЯ ОШИБКА при создании канала для {member.name}: {e}", exc_info=True)
 
 @bot.event
 async def on_member_remove(member):
@@ -104,18 +207,125 @@ async def on_member_remove(member):
     guild = member.guild
     channel_name = f"{CHANNEL_NAME}-{member.name.lower()}"
     
+    logger.info(f"Участник {member.name} (ID: {member.id}) покинул сервер {guild.name}")
+    
     channel = discord.utils.get(guild.channels, name=channel_name)
     if channel:
+        logger.info(f"Найден канал {channel.name} для удаления")
         try:
+            # Сохраняем информацию о канале перед удалением
+            channel_info = {
+                'name': channel.name,
+                'id': channel.id,
+                'created_at': channel.created_at.strftime("%d.%m.%Y %H:%M") if channel.created_at else "Неизвестно"
+            }
+            
             await channel.delete()
-            print(f"Удален канал {channel_name} при выходе участника {member.name}")
+            logger.info(f"✓ Канал {channel_name} (ID: {channel_info['id']}) успешно удален")
+            logger.info(f"  Канал был создан: {channel_info['created_at']}")
+            
+        except discord.Forbidden:
+            logger.error(f"❌ ОШИБКА: Нет прав на удаление канала {channel_name}")
+        except discord.NotFound:
+            logger.error(f"❌ ОШИБКА: Канал {channel_name} не найден при попытке удаления")
         except Exception as e:
-            print(f"Ошибка при удалении канала: {e}")
+            logger.error(f"❌ ОШИБКА при удалении канала: {e}", exc_info=True)
+    else:
+        logger.info(f"Канал для {member.name} не найден (возможно, был удален ранее)")
 
-# Дополнительная команда для ручного создания канала (опционально)
+# Дополнительная команда для ручного создания канала
 @bot.command(name='create_channel')
 @commands.has_permissions(administrator=True)
 async def manual_create_channel(ctx, member: discord.Member):
     """Создает канал для указанного участника (только для админов)"""
+    logger.info(f"Команда !create_channel вызвана пользователем {ctx.author.name} (ID: {ctx.author.id}) для участника {member.name}")
+    
     await create_channel_for_member(member)
-    await ctx.send(f"Канал для {member.mention} создан!")
+    await ctx.send(f"Канал для {member.mention} создан! Проверьте логи для деталей.")
+    
+    logger.info(f"Команда !create_channel выполнена")
+
+# Команда для проверки статуса
+@bot.command(name='bot_status')
+async def bot_status(ctx):
+    """Показывает статус бота и текущие настройки"""
+    logger.info(f"Команда !bot_status вызвана пользователем {ctx.author.name}")
+    
+    embed = discord.Embed(
+        title="Статус бота",
+        color=discord.Color.blue()
+    )
+    embed.add_field(name="Бот", value=bot.user.mention, inline=True)
+    embed.add_field(name="Задержка", value=f"{round(bot.latency * 1000)}ms", inline=True)
+    embed.add_field(name="Отслеживаемая роль", value=f"<@&{TARGET_ROLE_ID}>", inline=True)
+    embed.add_field(name="Имя канала", value=CHANNEL_NAME, inline=True)
+    embed.add_field(name="Серверов", value=len(bot.guilds), inline=True)
+    
+    await ctx.send(embed=embed)
+    logger.info(f"Статус бота отправлен пользователю {ctx.author.name}")
+
+# Команда для просмотра последних логов
+@bot.command(name='show_logs')
+@commands.has_permissions(administrator=True)
+async def show_logs(ctx, lines: int = 10):
+    """Показывает последние строки из лога (только для админов)"""
+    logger.info(f"Команда !show_logs вызвана пользователем {ctx.author.name} (запрошено строк: {lines})")
+    
+    try:
+        # Находим последний файл лога
+        log_files = sorted([f for f in os.listdir('logs') if f.startswith('bot_log_')])
+        if not log_files:
+            await ctx.send("❌ Файлы логов не найдены")
+            return
+        
+        latest_log = os.path.join('logs', log_files[-1])
+        
+        # Читаем последние строки
+        with open(latest_log, 'r', encoding='utf-8') as f:
+            all_lines = f.readlines()
+            last_lines = all_lines[-min(lines, len(all_lines)):]
+        
+        # Отправляем в виде файла (чтобы не засорять чат)
+        log_text = ''.join(last_lines)
+        with open('temp_log.txt', 'w', encoding='utf-8') as f:
+            f.write(f"Последние {len(last_lines)} строк из {latest_log}:\n\n")
+            f.write(log_text)
+        
+        await ctx.send(file=discord.File('temp_log.txt', 'latest_log.txt'))
+        os.remove('temp_log.txt')
+        
+        logger.info(f"Логи отправлены пользователю {ctx.author.name}")
+        
+    except Exception as e:
+        logger.error(f"Ошибка при отправке логов: {e}")
+        await ctx.send(f"❌ Ошибка при чтении логов: {e}")
+
+@bot.event
+async def on_command_error(ctx, error):
+    """Обработка ошибок команд"""
+    if isinstance(error, commands.MissingPermissions):
+        logger.warning(f"Пользователь {ctx.author.name} попытался использовать команду без прав: {ctx.command}")
+        await ctx.send("❌ У вас нет прав для использования этой команды.")
+    elif isinstance(error, commands.MissingRequiredArgument):
+        logger.warning(f"Пользователь {ctx.author.name} не указал обязательный аргумент в команде {ctx.command}")
+        await ctx.send(f"❌ Не указан обязательный аргумент. Использование: `{ctx.command.usage}`")
+    else:
+        logger.error(f"Ошибка в команде {ctx.command}: {error}", exc_info=True)
+        await ctx.send(f"❌ Произошла ошибка: {error}")
+
+# Запуск бота
+if __name__ == "__main__":
+    if TOKEN == 'YOUR_BOT_TOKEN':
+        logger.error("Токен бота не указан! Пожалуйста, укажите токен в переменной TOKEN")
+        print("\n" + "="*50)
+        print("ОШИБКА: Токен бота не указан!")
+        print("Замените 'YOUR_BOT_TOKEN' на реальный токен бота")
+        print("="*50 + "\n")
+    else:
+        logger.info("Запуск бота...")
+        try:
+            bot.run(TOKEN, log_handler=None)  # Отключаем встроенный логгер discord.py
+        except discord.LoginFailure:
+            logger.error("Ошибка входа: Неверный токен бота!")
+        except Exception as e:
+            logger.error(f"Критическая ошибка при запуске бота: {e}", exc_info=True)
