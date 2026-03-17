@@ -119,10 +119,3 @@ async def manual_create_channel(ctx, member: discord.Member):
     """Создает канал для указанного участника (только для админов)"""
     await create_channel_for_member(member)
     await ctx.send(f"Канал для {member.mention} создан!")
-
-# Запуск бота
-if __name__ == "__main__":
-    if TOKEN == 'YOUR_BOT_TOKEN':
-        print("Пожалуйста, укажите токен бота в переменной TOKEN")
-    else:
-        bot.run(TOKEN)
